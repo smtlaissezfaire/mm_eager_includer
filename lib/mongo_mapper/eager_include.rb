@@ -3,6 +3,14 @@ require 'mongo_mapper'
 module MongoMapper
   class EagerIncluder
     class << self
+      def enabled?
+        (@enabled == true || @enabled == false) ? @enabled : true
+      end
+
+      def enabled=(bool)
+        @enabled = bool
+      end
+
       def eager_include(record_or_records, *association_names, &block)
         association_names.each do |association_name|
           new(record_or_records, association_name).eager_include(&block)
@@ -45,7 +53,13 @@ module MongoMapper
       @proxy_class = @association.proxy_class
     end
 
+    def enabled?
+      self.class.enabled?
+    end
+
     def eager_include(&block)
+      return if !enabled?
+
       if @records.length == 0
         return
       end
@@ -79,19 +93,29 @@ module MongoMapper
       record.instance_eval(code, __FILE__, __LINE__)
     end
 
-    def eager_include_has_many(&block)
-      foreign_key = @association.foreign_key
+    def foreign_keys
+      @association.options[:in]
+    end
 
+    def foreign_key
+      @association_name.to_s.foreign_key
+    end
+
+    def primary_key
+      @association.options[:foreign_key] || @records.first.class.name.foreign_key
+    end
+
+    def eager_include_has_many(&block)
       ids = @records.map { |el| el.id }.uniq
       proxy_records = @association.klass.where({
-        foreign_key => {
+        primary_key => {
           '$in' => ids
         }
       }).all
 
       @records.each do |record|
         matching_proxy_records = proxy_records.select do |proxy_record|
-          record_or_records = proxy_record.send(foreign_key)
+          record_or_records = proxy_record.send(primary_key)
           if record_or_records.is_a?(Array)
             record_or_records.include?(record.id)
           else
@@ -104,12 +128,9 @@ module MongoMapper
     end
 
     def eager_include_has_one(&block)
-      foreign_key = @association_name.to_s.foreign_key
-
       ids = @records.map { |el| el.id }.uniq
-      foreign_key = @records.first.class.to_s.foreign_key
       proxy_records = @association.klass.where({
-        foreign_key => ids
+        primary_key => ids
       })
 
       if block
@@ -120,7 +141,7 @@ module MongoMapper
 
       @records.each do |record|
         matching_proxy_record = proxy_records.detect do |proxy_record|
-          proxy_record.send(foreign_key) == record.id
+          proxy_record.send(primary_key) == record.id
         end
 
         setup_association(record, @association_name, matching_proxy_record)
@@ -128,8 +149,8 @@ module MongoMapper
     end
 
     def eager_include_belongs_to(&block)
-      foreign_key = @association_name.to_s.foreign_key
       ids = @records.map { |el| el.send(foreign_key) }.uniq
+
       proxy_records = @association.klass.where({
         :_id => {
           '$in' => ids
@@ -152,8 +173,6 @@ module MongoMapper
     end
 
     def eager_include_has_many_in(&block)
-      foreign_keys = @association.options[:in]
-
       ids = @records.map { |el| el.send(foreign_keys) }.flatten.uniq
       proxy_records = @association.klass.where({
         '_id' => {

@@ -1,4 +1,4 @@
-require File.dirname(__FILE__) + "/../lib/mongo_mapper/eager_include"
+require File.dirname(__FILE__) + "/../lib/mongo_mapper/eager_includer"
 
 class User
   include MongoMapper::Document

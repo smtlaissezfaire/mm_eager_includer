@@ -3,7 +3,9 @@
 
 Eager Include models
 
-## Examples:
+## Examples / How-To:
+
+    require 'mongo_mapper/eager_includer'
 
     MongoMapper::EagerIncluder.eager_include(@user, :posts)
     MongoMapper::EagerIncluder.eager_include([@user1, @user2], :posts)

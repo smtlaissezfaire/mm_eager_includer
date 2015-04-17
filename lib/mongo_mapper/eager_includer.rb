@@ -37,6 +37,8 @@ class MongoMapper::EagerIncluder
   end
 
   def initialize(record_or_records, association_name)
+    association_name = association_name.to_sym
+
     @records = Array(record_or_records)
 
     if @records.length == 0

@@ -45,6 +45,11 @@ describe MongoMapper::EagerIncluder do
     @user.posts.should == [@post, @post_2]
   end
 
+  it "should be able to eager include a has_many association with a string" do
+    MongoMapper::EagerIncluder.eager_include(@user, "posts")
+    @user.posts.should == [@post, @post_2]
+  end
+
   it "should be able to eager include a belongs_to association" do
     MongoMapper::EagerIncluder.eager_include([@post, @post_2], :user)
     @post.user.should == @user

@@ -1,122 +1,119 @@
 require 'mongo_mapper'
 
 class MongoMapper::EagerIncluder
-  class << self
-    def enabled?
-      (@enabled == true || @enabled == false) ? @enabled : true
-    end
-
-    def enabled=(bool)
-      @enabled = bool
-    end
-
-    def eager_include(record_or_records, *association_names, &block)
-      association_names.each do |association_name|
-        new(record_or_records, association_name).eager_include(&block)
-      end
-    end
-
-    def write_to_cache(object_id, association_name, value)
-      cache[association_name] ||= {}
-      cache[association_name][object_id] = value
-    end
-
-    def read_from_cache(object_id, association_name)
-      cache[association_name][object_id]
-    end
-
-    def clear_cache!
-      @cache = {}
-    end
-
-  private
-
-    def cache
-      @cache ||= {}
+  def self.eager_include(record_or_records, *association_names, &query_alteration_block)
+    association_names.each do |association_name|
+      new(record_or_records, association_name, &query_alteration_block).eager_include
     end
   end
 
-  def initialize(record_or_records, association_name)
-    association_name = association_name.to_sym
-
+  def initialize(record_or_records, association_name, &query_alteration_block)
+    if record_or_records.is_a? Plucky::Query
+      raise "You must call `to_a` on `Plucky::Query` objects before passing to eager_include"
+    end
     @records = Array(record_or_records)
 
-    if @records.length == 0
-      return
-    end
-
+    return if @records.length == 0
     @association_name = association_name.to_sym
-    @association = @records.first.associations[association_name]
+    @query_alteration_block = query_alteration_block
+    @association = @records.first.associations[@association_name]
     if !@association
       raise "Could not find association `#{association_name}` on instance of #{@records.first.class}"
     end
-
-    @proxy_class = @association.proxy_class
   end
 
-  def enabled?
-    self.class.enabled?
-  end
-
-  def eager_include(&block)
-    return if !enabled?
-
-    if @records.length == 0
-      return
+  def eager_include
+    @records.reject! do |record|
+      record.instance_variable_defined?(instance_variable_name)
     end
 
-    if @proxy_class == MongoMapper::Plugins::Associations::ManyDocumentsProxy
-      eager_include_has_many(&block)
-    elsif @proxy_class == MongoMapper::Plugins::Associations::BelongsToProxy
-      eager_include_belongs_to(&block)
-    elsif @proxy_class == MongoMapper::Plugins::Associations::OneProxy
-      eager_include_has_one(&block)
-    elsif @proxy_class == MongoMapper::Plugins::Associations::InArrayProxy
-      eager_include_has_many_in(&block)
+    return if @records.length == 0
+
+    @association_type = case @association.proxy_class.to_s
+    when 'MongoMapper::Plugins::Associations::ManyDocumentsProxy'
+      :has_many
+    when 'MongoMapper::Plugins::Associations::BelongsToProxy'
+      :belongs_to
+    when 'MongoMapper::Plugins::Associations::OneProxy'
+      :has_one
+    when 'MongoMapper::Plugins::Associations::InArrayProxy'
+      :has_many_in
     else
-      raise NotImplementedError, "#{@proxy_class} not supported yet!"
+      raise NotImplementedError, "#{@association.proxy_class} not supported yet!"
     end
+
+    send("eager_include_#{@association_type}")
   end
 
 private
 
-  def setup_association(record, association_name, value)
-    association_name = association_name.to_sym
+  attr_reader :association_name
 
-    self.class.write_to_cache(record.object_id, association_name, value)
+  def instance_variable_name
+    "@eager_loaded_#{association_name}"
+  end
 
-    code = <<-CODE
+  def setup_association(record, value)
+    code = <<-RUBY
       def #{association_name}
-        MongoMapper::EagerIncluder.read_from_cache(object_id, :#{association_name})
+        #{instance_variable_name}
       end
-    CODE
-
+    RUBY
     record.instance_eval(code, __FILE__, __LINE__)
+    record.instance_variable_set(instance_variable_name, value)
+  end
+
+  def association_class
+    @association_class ||= @association.klass
   end
 
   def foreign_keys
-    @association.options[:in]
+    @foreign_keys ||= @association.options[:in]
   end
 
   def foreign_key
-    @association_name.to_s.foreign_key
+    @foreign_key ||= @association_name.to_s.foreign_key
   end
 
   def primary_key
-    @association.options[:foreign_key] || @records.first.class.name.foreign_key
+    @primary_key ||= @association.options[:foreign_key] || @records.first.class.name.foreign_key
+  end
+
+  def record_ids
+    case @association_type
+    when :has_many, :has_one
+      @records.map(&:id)
+    when :belongs_to
+      @records.map do |record|
+        record.send(foreign_key)
+      end
+    when :has_many_in
+      @records.map do |record|
+        record.send(foreign_keys)
+      end.flatten
+    end.uniq
+  end
+
+  def load_association_records!
+    @association_records_query = case @association_type
+    when :has_many, :has_one
+      association_class.where({ primary_key => { '$in' => record_ids } })
+    when :belongs_to, :has_many_in
+      association_class.where({ _id: { '$in' => record_ids } })
+    end
+
+    if @query_alteration_block
+      @association_records_query = @query_alteration_block.call(@association_records_query)
+    end
+    @association_records = @association_records_query.all
   end
 
   def eager_include_has_many(&block)
-    ids = @records.map { |el| el.id }.uniq
-    proxy_records = @association.klass.where({
-      primary_key => {
-        '$in' => ids
-      }
-    }).all
+    load_association_records!
 
     @records.each do |record|
-      matching_proxy_records = proxy_records.select do |proxy_record|
-        record_or_records = proxy_record.send(primary_key)
+      matching_association_records = @association_records.select do |association_record|
+        record_or_records = association_record.send(primary_key)
         if record_or_records.is_a?(Array)
           record_or_records.include?(record.id)
         else
@@ -124,71 +121,45 @@ private
         end
       end
 
-      setup_association(record, @association_name, matching_proxy_records)
+      setup_association(record, matching_association_records)
     end
   end
 
   def eager_include_has_one(&block)
-    ids = @records.map { |el| el.id }.uniq
-    proxy_records = @association.klass.where({
-      primary_key => ids
-    })
-
-    if block
-      proxy_records = block.call(proxy_records)
-    end
-
-    proxy_records = proxy_records.all
+    load_association_records!
 
     @records.each do |record|
-      matching_proxy_record = proxy_records.detect do |proxy_record|
-        proxy_record.send(primary_key) == record.id
+      matching_association_record = @association_records.detect do |association_record|
+        association_record.send(primary_key) == record.id
       end
 
-      setup_association(record, @association_name, matching_proxy_record)
+      setup_association(record, matching_association_record)
     end
   end
 
   def eager_include_belongs_to(&block)
-    ids = @records.map { |el| el.send(foreign_key) }.uniq
-
-    proxy_records = @association.klass.where({
-      :_id => {
-        '$in' => ids
-      }
-    })
-
-    if block
-      proxy_records = block.call(proxy_records)
-    end
-
-    proxy_records = proxy_records.all
+    load_association_records!
 
     @records.each do |record|
-      matching_proxy_record = proxy_records.detect do |proxy_record|
-        proxy_record.id == record.send(foreign_key)
+      matching_association_record = @association_records.detect do |association_record|
+        association_record.id == record.send(foreign_key)
       end
 
-      setup_association(record, @association_name, matching_proxy_record)
+      setup_association(record, matching_association_record)
     end
   end
 
   def eager_include_has_many_in(&block)
-    ids = @records.map { |el| el.send(foreign_keys) }.flatten.uniq
-    proxy_records = @association.klass.where({
-      '_id' => {
-        '$in' => ids
-      }
-    }).all
+    load_association_records!
 
     @records.each do |record|
-      proxy_record_ids = record.send(foreign_keys)
+      association_record_ids = record.send(foreign_keys)
 
-      matching_proxy_records = proxy_record_ids.map do |proxy_record_id|
-        proxy_records.detect { |proxy_record| proxy_record.id == proxy_record_id }
+      matching_association_records = association_record_ids.map do |association_record_id|
+        @association_records.detect { |association_record| association_record.id == association_record_id }
       end
 
-      setup_association(record, @association_name, matching_proxy_records)
+      setup_association(record, matching_association_records)
     end
   end
 end

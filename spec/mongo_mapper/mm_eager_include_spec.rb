@@ -230,4 +230,29 @@ describe MongoMapper::EagerIncluder do
       end
     end
   end
+
+  context "sanity checking eager includer" do
+    before do
+      @user1 = User.create!
+      @user2 = User.create!
+
+      @users = [@user1, @user2]
+    end
+
+    it "should be able to load the right number of objects" do
+      2.times do
+        @user1.posts.create!
+      end
+      3.times do
+        @user2.posts.create!
+      end
+
+      @user1.reload
+      @user2.reload
+
+      MongoMapper::EagerIncluder.eager_include([@user1, @user2], :posts)
+      @user1.posts.length.should == 2
+      @user2.posts.length.should == 3
+    end
+  end
 end

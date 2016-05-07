@@ -2,13 +2,14 @@ require 'date'
 
 Gem::Specification.new do |s|
   s.name        = 'mm_eager_includer'
-  s.version     = '0.0.3'
+  s.version     = '0.0.4'
   s.date        = Date.today.to_s
   s.summary     = "Eager include associations with mongo mapper"
   s.description = "Eager include associations with mongo mapper"
   s.authors     = [
     "Scott Taylor",
-    "Andrew Pariser"
+    "Andrew Pariser",
+    "Jared Grippe",
   ]
   s.email       = 'scott@railsnewbie.com'
   s.files       = Dir.glob("lib/**/**.rb")

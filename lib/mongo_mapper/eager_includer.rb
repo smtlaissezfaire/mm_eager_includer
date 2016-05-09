@@ -11,7 +11,7 @@ class MongoMapper::EagerIncluder
     if record_or_records.is_a? Plucky::Query
       raise "You must call `to_a` on `Plucky::Query` objects before passing to eager_include"
     end
-    @records = Array(record_or_records)
+    @records = Array(record_or_records).dup
 
     return if @records.length == 0
     @association_name = association_name.to_sym
@@ -23,6 +23,7 @@ class MongoMapper::EagerIncluder
   end
 
   def eager_include
+    # ignore records that have already had this assoication eager loaded
     @records.reject! do |record|
       record.instance_variable_defined?(instance_variable_name)
     end

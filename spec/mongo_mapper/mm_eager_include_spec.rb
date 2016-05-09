@@ -231,6 +231,47 @@ describe MongoMapper::EagerIncluder do
     end
   end
 
+
+  context 'eager loadings the same association more than once' do
+    it 'should not eager load any association on any record more than once' do
+      4.times do
+        user = User.create!
+        2.times.map do
+          Post.create! user: user
+        end
+      end
+
+      all_users = User.all
+      expect(all_users.length).to eq 4
+      first_two_users = all_users.first(2)
+
+      expect{
+        MongoMapper::EagerIncluder.eager_include(first_two_users, :posts)
+      }.to perform_these_mongo_queries(
+        {collection: :posts, selector: {user_id: {"$in"=> first_two_users.map(&:id)}}},
+      )
+      expect(first_two_users.length).to eq 2
+
+      expect{ first_two_users.each(&:posts) }.to_not perform_any_mongo_queries
+
+      expect{
+        MongoMapper::EagerIncluder.eager_include(all_users, :posts)
+      }.to perform_these_mongo_queries(
+        {collection: :posts, selector: {user_id: {"$in"=> (all_users - first_two_users).map(&:id)}}},
+      )
+
+      expect(all_users.length).to eq 4
+
+      expect{ all_users.each(&:posts) }.to_not perform_any_mongo_queries
+
+      expect{
+        MongoMapper::EagerIncluder.eager_include(all_users, :posts)
+      }.to_not perform_any_mongo_queries
+
+      expect(all_users.length).to eq 4
+    end
+  end
+
   context "sanity checking eager includer" do
     before do
       @user1 = User.create!

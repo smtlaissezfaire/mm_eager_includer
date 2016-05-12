@@ -23,9 +23,9 @@ class MongoMapper::EagerIncluder
   end
 
   def eager_include
-    # ignore records that have already had this assoication eager loaded
+    # ignore records that have already loaded this assoication
     @records.reject! do |record|
-      record.instance_variable_defined?(instance_variable_name)
+      get_association_proxy(record).loaded?
     end
 
     return if @records.length == 0
@@ -50,18 +50,14 @@ private
 
   attr_reader :association_name
 
-  def instance_variable_name
-    "@eager_loaded_#{association_name}"
+  def get_association_proxy(record)
+    record.send(:get_proxy, @association)
   end
 
   def setup_association(record, value)
-    code = <<-RUBY
-      def #{association_name}
-        #{instance_variable_name}
-      end
-    RUBY
-    record.instance_eval(code, __FILE__, __LINE__)
-    record.instance_variable_set(instance_variable_name, value)
+    association_proxy = get_association_proxy(record)
+    Object.instance_method(:instance_variable_set).bind(association_proxy).call(:@target, value)
+    association_proxy.loaded
   end
 
   def association_class

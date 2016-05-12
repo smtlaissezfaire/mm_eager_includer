@@ -296,4 +296,59 @@ describe MongoMapper::EagerIncluder do
       @user2.posts.length.should == 3
     end
   end
+
+  context 'reload' do
+    it 'should not break the existing assoication loading code' do
+      user = User.create!
+      posts = 3.times.map{ Post.create! user_id: user.id }
+      user = User.first
+
+      expect{
+        user.posts.should_not be_loaded
+      }.to_not perform_any_mongo_queries
+
+      expect{
+        user.posts.should eq posts
+      }.to perform_these_mongo_queries(
+        { collection: :posts, selector: { user_id: user.id } }
+      )
+
+      expect{
+        user.posts.should be_loaded
+      }.to_not perform_any_mongo_queries
+
+      user = User.first
+      expect{
+        user.posts.should_not be_loaded
+      }.to_not perform_any_mongo_queries
+
+      expect{
+        MongoMapper::EagerIncluder.eager_include(user, :posts)
+      }.to perform_these_mongo_queries(
+        { collection: :posts, selector: { user_id: { "$in" => [user.id] } } }
+      )
+      expect{
+        user.posts.should be_loaded
+      }.to_not perform_any_mongo_queries
+
+      expect{
+        user.posts.should eq posts
+      }.to_not perform_any_mongo_queries
+
+      user.reload
+      expect{
+        user.posts.should_not be_loaded
+      }.to_not perform_any_mongo_queries
+
+      expect{
+        user.posts.should eq posts
+      }.to perform_these_mongo_queries(
+        { collection: :posts, selector: { user_id: user.id } }
+      )
+
+      expect{
+        user.posts.should be_loaded
+      }.to_not perform_any_mongo_queries
+    end
+  end
 end

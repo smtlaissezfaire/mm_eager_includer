@@ -21,7 +21,6 @@ end
 Mongo::Cursor.class_eval do
   alias_method "send_initial_query_without_logging", "send_initial_query"
   def send_initial_query(*args)
-    # binding.pry if $SUCKIT_DOWG_PANTS
     send_initial_query_without_logging(*args).tap do |*res|
       query = {
         collection: @collection.name.to_sym,
